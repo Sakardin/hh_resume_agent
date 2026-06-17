@@ -1,0 +1,258 @@
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+
+from config import AppConfig
+from pipeline import ResumePipeline
+from reports import JsonReportWriter, SeenVacancyStore
+from resume.models import MatchScore, ResumeAdaptationResult
+from vacancies.models import VacancyDetails, VacancySummary
+
+
+class _DummyRepository:
+    def __init__(self, vacancies, details_by_url) -> None:
+        self._vacancies = vacancies
+        self._details_by_url = details_by_url
+        self.requested_urls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def search(self, keyword: str):
+        return self._vacancies
+
+    def get_details(self, url: str) -> VacancyDetails:
+        self.requested_urls.append(url)
+        return self._details_by_url[url]
+
+
+class _DummyResumeService:
+    def __init__(self) -> None:
+        self.target_languages = []
+
+    def score_vacancy(self, resume_text: str, vacancy_text: str) -> MatchScore:
+        return MatchScore(score=90, strong_matches=["QA"], gaps=[], reason="ok")
+
+    def adapt_resume_with_comments(
+        self,
+        resume_text: str,
+        vacancy_text: str,
+        user_prompt: str,
+        target_language: str,
+    ) -> ResumeAdaptationResult:
+        self.target_languages.append(target_language)
+        return ResumeAdaptationResult(
+            target_language=target_language,
+            recruiter_review="review",
+            interview_review="interview",
+            vacancy_comments="vacancy",
+            final_resume_markdown="# Resume\n\ncontent",
+        )
+
+
+class _DummyMarkdownExporter:
+    def export(self, markdown_text: str, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown_text, encoding="utf-8")
+        return output_path
+
+
+class _LowScoreResumeService:
+    def __init__(self) -> None:
+        self.adapt_calls = 0
+
+    def score_vacancy(self, resume_text: str, vacancy_text: str) -> MatchScore:
+        return MatchScore(score=60, strong_matches=[], gaps=["gap"], reason="low score")
+
+    def adapt_resume_with_comments(
+        self,
+        resume_text: str,
+        vacancy_text: str,
+        user_prompt: str,
+        target_language: str,
+    ) -> ResumeAdaptationResult:
+        self.adapt_calls += 1
+        return ResumeAdaptationResult(
+            target_language=target_language,
+            recruiter_review="review",
+            interview_review="interview",
+            vacancy_comments="vacancy",
+            final_resume_markdown="# Resume\n\ncontent",
+        )
+
+
+class ResumePipelineTest(unittest.TestCase):
+    def test_create_run_output_dir_uses_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base_output_dir = Path(directory) / "output"
+            base_output_dir.mkdir(parents=True, exist_ok=True)
+
+            run_output_dir = ResumePipeline._create_run_output_dir(
+                base_output_dir,
+                now=datetime(2026, 6, 17, 10, 45, 30),
+            )
+
+            self.assertEqual(run_output_dir.name, "2026-06-17_10-45-30")
+            self.assertTrue(run_output_dir.exists())
+
+    def test_create_run_output_dir_adds_suffix_on_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base_output_dir = Path(directory) / "output"
+            existing = base_output_dir / "2026-06-17_10-45-30"
+            existing.mkdir(parents=True, exist_ok=True)
+
+            run_output_dir = ResumePipeline._create_run_output_dir(
+                base_output_dir,
+                now=datetime(2026, 6, 17, 10, 45, 30),
+            )
+
+            self.assertEqual(run_output_dir.name, "2026-06-17_10-45-30_2")
+            self.assertTrue(run_output_dir.exists())
+
+    def test_run_skips_previously_viewed_vacancies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            seen_path = output_dir / "seen_vacancies.json"
+            seen_store = SeenVacancyStore(seen_path)
+            seen_store.save(["https://hh.ru/vacancy/1"])
+
+            resume_path = root / "resume.md"
+            prompts_path = root / "prompts.md"
+            keywords_path = root / "keywords.txt"
+            resume_path.write_text("resume", encoding="utf-8")
+            prompts_path.write_text("prompt", encoding="utf-8")
+            keywords_path.write_text("qa", encoding="utf-8")
+
+            config = AppConfig(
+                ollama_model="model",
+                ollama_base_url="http://localhost",
+                llm_debug=False,
+                llm_log_preview_chars=800,
+                hh_area=1002,
+                min_match_score=70,
+                max_results_per_keyword=10,
+                headless=True,
+                browser_profile_dir=root / "browser_profile",
+                output_dir=output_dir,
+                seen_vacancies_path=seen_path,
+                resume_path=resume_path,
+                prompts_path=prompts_path,
+                keywords_path=keywords_path,
+                page_timeout_ms=1000,
+                retry_attempts=1,
+                retry_delay_ms=0,
+                generate_pdf=False,
+            )
+            repository = _DummyRepository(
+                vacancies=[
+                    VacancySummary(title="Seen vacancy", url="https://hh.ru/vacancy/1"),
+                    VacancySummary(title="New vacancy", url="https://hh.ru/vacancy/2"),
+                ],
+                details_by_url={
+                    "https://hh.ru/vacancy/2": VacancyDetails(
+                        title="New vacancy",
+                        company="Example",
+                        url="https://hh.ru/vacancy/2",
+                        description="desc",
+                        key_skills=["QA"],
+                    )
+                },
+            )
+
+            resume_service = _DummyResumeService()
+
+            pipeline = ResumePipeline(
+                config=config,
+                vacancy_repository=repository,
+                resume_service=resume_service,
+                markdown_exporter=_DummyMarkdownExporter(),
+                pdf_exporter=None,
+                report_writer=JsonReportWriter(),
+                seen_vacancy_store=seen_store,
+            )
+
+            report_path = pipeline.run()
+            saved_urls = seen_store.load()
+
+            self.assertEqual(repository.requested_urls, ["https://hh.ru/vacancy/2"])
+            self.assertEqual(
+                saved_urls,
+                {"https://hh.ru/vacancy/1", "https://hh.ru/vacancy/2"},
+            )
+            self.assertEqual(resume_service.target_languages, ["English"])
+            self.assertTrue(report_path.exists())
+
+    def test_run_marks_low_score_vacancy_as_seen_and_skips_export(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            seen_path = output_dir / "seen_vacancies.json"
+            seen_store = SeenVacancyStore(seen_path)
+
+            resume_path = root / "resume.md"
+            prompts_path = root / "prompts.md"
+            keywords_path = root / "keywords.txt"
+            resume_path.write_text("resume", encoding="utf-8")
+            prompts_path.write_text("prompt", encoding="utf-8")
+            keywords_path.write_text("qa", encoding="utf-8")
+
+            config = AppConfig(
+                ollama_model="model",
+                ollama_base_url="http://localhost",
+                llm_debug=False,
+                llm_log_preview_chars=800,
+                hh_area=1002,
+                min_match_score=70,
+                max_results_per_keyword=10,
+                headless=True,
+                browser_profile_dir=root / "browser_profile",
+                output_dir=output_dir,
+                seen_vacancies_path=seen_path,
+                resume_path=resume_path,
+                prompts_path=prompts_path,
+                keywords_path=keywords_path,
+                page_timeout_ms=1000,
+                retry_attempts=1,
+                retry_delay_ms=0,
+                generate_pdf=False,
+            )
+            repository = _DummyRepository(
+                vacancies=[VacancySummary(title="Low score vacancy", url="https://hh.ru/vacancy/3")],
+                details_by_url={
+                    "https://hh.ru/vacancy/3": VacancyDetails(
+                        title="Low score vacancy",
+                        company="Example",
+                        url="https://hh.ru/vacancy/3",
+                        description="desc",
+                        key_skills=["QA"],
+                    )
+                },
+            )
+            resume_service = _LowScoreResumeService()
+
+            pipeline = ResumePipeline(
+                config=config,
+                vacancy_repository=repository,
+                resume_service=resume_service,
+                markdown_exporter=_DummyMarkdownExporter(),
+                pdf_exporter=None,
+                report_writer=JsonReportWriter(),
+                seen_vacancy_store=seen_store,
+            )
+
+            report_path = pipeline.run()
+            saved_urls = seen_store.load()
+            report_payload = report_path.read_text(encoding="utf-8")
+
+            self.assertEqual(saved_urls, {"https://hh.ru/vacancy/3"})
+            self.assertEqual(resume_service.adapt_calls, 0)
+            self.assertEqual(report_payload.strip(), "[]")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+.venv/
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+
+# User data
+data/*
+!data/.gitkeep
+
+# Generated files
+output/*
+!output/.gitkeep
+
+# Browser profile
+browser_profile/
+
+# Logs
+*.log
+
+# PDFs
+*.pdf
