@@ -60,21 +60,22 @@ ollama pull qwen3:8b
 
 ```bash
 python -m venv venv
-source venv/bin/activate
 ```
 
-Для Windows:
+Или:
 
 ```bash
-venv\Scripts\activate
+python -m venv .venv
 ```
 
 ## 3. Установить зависимости
 
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+.venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium
 ```
+
+Если используется `venv`, а не `.venv`, заменить пути соответственно.
 
 ## 4. Создать `.env`
 
@@ -122,7 +123,15 @@ ollama run qwen3:8b
 Во втором терминале:
 
 ```bash
-python main.py
+./run.sh
+```
+
+Скрипт [run.sh](/Users/dmitry/Projects/HR-Agent/hh_resume_agent/run.sh) сам найдет `.venv` или `venv` и запустит `main.py` через Python из виртуального окружения.
+
+Если у файла еще нет права на выполнение:
+
+```bash
+chmod +x run.sh
 ```
 
 ## 6. Результаты
@@ -180,6 +189,6 @@ LLM_DEBUG=true
 Быстрая проверка без запуска браузера и Ollama:
 
 ```bash
-python -m unittest
-python -m compileall -q . -x 'venv|.venv'
+.venv/bin/python -m unittest
+.venv/bin/python -m compileall -q . -x 'venv|.venv'
 ```

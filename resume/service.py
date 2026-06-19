@@ -31,11 +31,9 @@ class ResumeService:
 - учитывай только то, что есть в резюме
 - если вакансия не QA / AQA / QA Lead, score ниже 50
 
-Резюме:
-{resume_text}
+{self._vacancy_context(vacancy_text)}
 
-Вакансия:
-{vacancy_text}
+{self._resume_context(resume_text)}
 """
         raw_response = self._llm_client.ask(prompt)
         data = self._json_parser.parse_object(raw_response)
@@ -70,6 +68,7 @@ class ResumeService:
         )
         vacancy_comments, final_resume = self._adapt_for_vacancy(
             preparation=preparation,
+            source_resume_text=resume_text,
             vacancy_text=vacancy_text,
             vacancy_prompt=prompt_sequence.vacancy_adaptation_prompt,
             target_language=target_language,
@@ -94,8 +93,7 @@ class ResumeService:
 
 {prompt_sequence.recruiter_review_prompt}
 
-Резюме:
-{resume_text}
+{self._resume_context(resume_text)}
 
 Правила ответа:
 - не переписывай резюме
@@ -111,8 +109,7 @@ class ResumeService:
 
 {prompt_sequence.rewrite_prompt}
 
-Исходное резюме:
-{resume_text}
+{self._resume_context(resume_text)}
 
 Разбор рекрутера:
 {recruiter_review}
@@ -150,6 +147,7 @@ class ResumeService:
     def _adapt_for_vacancy(
         self,
         preparation: ResumePreparationResult,
+        source_resume_text: str,
         vacancy_text: str,
         vacancy_prompt: Optional[str],
         target_language: str,
@@ -163,10 +161,11 @@ class ResumeService:
 
 {vacancy_prompt}
 
-Описание вакансии:
-{vacancy_text}
+{self._vacancy_context(vacancy_text)}
 
-Подготовленное резюме:
+{self._resume_context(source_resume_text)}
+
+Подготовленное резюме после внутренней переработки:
 {preparation.rewritten_resume_markdown}
 
 Предыдущие комментарии рекрутера:
@@ -191,6 +190,14 @@ class ResumeService:
 
         comments, final_resume = self._split_comments_and_resume(response)
         return comments, final_resume
+
+    @staticmethod
+    def _vacancy_context(vacancy_text: str) -> str:
+        return f"Вот описание вакансии:\n{vacancy_text}"
+
+    @staticmethod
+    def _resume_context(resume_text: str) -> str:
+        return f"Вот моё резюме:\n{resume_text}"
 
     def _ask_markdown(self, prompt: str) -> str:
         response = self._strip_outer_markdown_fence(self._llm_client.ask(prompt))

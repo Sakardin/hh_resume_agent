@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Set
@@ -19,6 +20,7 @@ from utils import (
 from vacancies import HhVacancyRepository, VacancyDetails
 
 logger = logging.getLogger(__name__)
+WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
 class ResumePipeline:
@@ -140,6 +142,12 @@ class ResumePipeline:
         vacancy: VacancyDetails,
     ) -> Optional[MatchScore]:
         try:
+            self._log_llm_inputs(
+                stage="score_vacancy",
+                resume_text=resume_text,
+                vacancy_text=vacancy_text,
+                vacancy=vacancy,
+            )
             return self._resume_service.score_vacancy(resume_text, vacancy_text)
         except Exception as error:
             logger.warning("Could not score vacancy %s: %s", vacancy.title, error)
@@ -153,6 +161,12 @@ class ResumePipeline:
         vacancy: VacancyDetails,
     ) -> Optional[ResumeAdaptationResult]:
         try:
+            self._log_llm_inputs(
+                stage="adapt_resume",
+                resume_text=resume_text,
+                vacancy_text=vacancy_text,
+                vacancy=vacancy,
+            )
             target_language = detect_text_language(vacancy.to_language_detection_text())
             return self._resume_service.adapt_resume_with_comments(
                 resume_text=resume_text,
@@ -206,6 +220,30 @@ class ResumePipeline:
 
         used_file_names.add(name)
         return name
+
+    def _log_llm_inputs(
+        self,
+        stage: str,
+        resume_text: str,
+        vacancy_text: str,
+        vacancy: VacancyDetails,
+    ) -> None:
+        if not self._config.llm_debug:
+            return
+
+        logger.info(
+            "LLM input stage=%s vacancy=%r resume_preview=%r vacancy_preview=%r",
+            stage,
+            vacancy.title,
+            self._preview_text(f"Вот моё резюме:\n{resume_text}"),
+            self._preview_text(f"Вот описание вакансии:\n{vacancy_text}"),
+        )
+
+    def _preview_text(self, text: str) -> str:
+        normalized = WHITESPACE_PATTERN.sub(" ", text).strip()
+        if len(normalized) <= self._config.llm_log_preview_chars:
+            return normalized
+        return normalized[: self._config.llm_log_preview_chars] + "..."
 
 
 def create_pipeline(config: AppConfig) -> ResumePipeline:
