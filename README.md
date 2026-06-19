@@ -21,6 +21,23 @@
 
 Файлы `hh_browser.py`, `resume_agent.py` и `pdf_generator.py` оставлены как совместимые обертки над новой структурой.
 
+## Папка `data`
+
+В репозитории хранятся:
+
+- `data/prompts.md` — рабочий файл с промптами для LLM, общий для проекта
+- `data/resume_master.example.md` — пустой шаблон файла с основным резюме
+- `data/keywords.example.txt` — пустой шаблон файла со списком поисковых запросов
+
+Локально нужно создать свои рабочие файлы, без суффикса `.example`:
+
+- `data/resume_master.md` — полное исходное резюме, на основе которого делается адаптация
+- `data/keywords.txt` — список ключевых слов, по которым ищутся вакансии
+
+Файл `data/prompts.md` должен быть в рабочем дереве, потому что тесты и приложение читают его напрямую.
+
+Файлы `data/resume_master.md` и `data/keywords.txt` игнорируются Git и не должны коммититься, потому что содержат персональные данные и локальные настройки поиска.
+
 ## 1. Установить Ollama
 
 Скачать:
@@ -45,21 +62,22 @@ ollama pull qwen3:8b
 
 ```bash
 python -m venv venv
-source venv/bin/activate
 ```
 
-Для Windows:
+Или:
 
 ```bash
-venv\Scripts\activate
+python -m venv .venv
 ```
 
 ## 3. Установить зависимости
 
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+.venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium
 ```
+
+Если используется `venv`, а не `.venv`, заменить пути соответственно.
 
 ## 4. Создать `.env`
 
@@ -107,7 +125,15 @@ ollama run qwen3:8b
 Во втором терминале:
 
 ```bash
-python main.py
+./run.sh
+```
+
+Скрипт [run.sh](/Users/dmitry/Projects/HR-Agent/hh_resume_agent/run.sh) сам найдет `.venv` или `venv` и запустит `main.py` через Python из виртуального окружения.
+
+Если у файла еще нет права на выполнение:
+
+```bash
+chmod +x run.sh
 ```
 
 ## 6. Результаты
@@ -165,6 +191,6 @@ LLM_DEBUG=true
 Быстрая проверка без запуска браузера и Ollama:
 
 ```bash
-python -m unittest
-python -m compileall -q . -x 'venv|.venv'
+.venv/bin/python -m unittest
+.venv/bin/python -m compileall -q . -x 'venv|.venv'
 ```

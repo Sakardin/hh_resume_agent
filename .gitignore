@@ -18,6 +18,9 @@ venv/
 # User data
 data/*
 !data/.gitkeep
+!data/prompts.md
+!data/*.example.md
+!data/*.example.txt
 
 # Generated files
 output/*

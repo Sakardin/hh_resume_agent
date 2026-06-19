@@ -253,6 +253,59 @@ class ResumePipelineTest(unittest.TestCase):
             self.assertEqual(resume_service.adapt_calls, 0)
             self.assertEqual(report_payload.strip(), "[]")
 
+    def test_log_llm_inputs_writes_resume_and_vacancy_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AppConfig(
+                ollama_model="model",
+                ollama_base_url="http://localhost",
+                llm_debug=True,
+                llm_log_preview_chars=200,
+                hh_area=1002,
+                min_match_score=70,
+                max_results_per_keyword=10,
+                headless=True,
+                browser_profile_dir=root / "browser_profile",
+                output_dir=root / "output",
+                seen_vacancies_path=root / "output" / "seen_vacancies.json",
+                resume_path=root / "resume.md",
+                prompts_path=root / "prompts.md",
+                keywords_path=root / "keywords.txt",
+                page_timeout_ms=1000,
+                retry_attempts=1,
+                retry_delay_ms=0,
+                generate_pdf=False,
+            )
+            pipeline = ResumePipeline(
+                config=config,
+                vacancy_repository=_DummyRepository(vacancies=[], details_by_url={}),
+                resume_service=_DummyResumeService(),
+                markdown_exporter=_DummyMarkdownExporter(),
+                pdf_exporter=None,
+                report_writer=JsonReportWriter(),
+                seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
+            )
+            vacancy = VacancyDetails(
+                title="QA Engineer",
+                company="Example",
+                url="https://hh.ru/vacancy/1",
+                description="Playwright and API testing",
+                key_skills=["QA", "Playwright"],
+            )
+
+            with self.assertLogs("pipeline", level="INFO") as captured:
+                pipeline._log_llm_inputs(
+                    stage="score_vacancy",
+                    resume_text="Manual QA and API testing",
+                    vacancy_text=vacancy.to_prompt_text(),
+                    vacancy=vacancy,
+                )
+
+            joined_logs = "\n".join(captured.output)
+            self.assertIn("Вот моё резюме:", joined_logs)
+            self.assertIn("Вот описание вакансии:", joined_logs)
+            self.assertIn("QA Engineer", joined_logs)
+
 
 if __name__ == "__main__":
     unittest.main()
