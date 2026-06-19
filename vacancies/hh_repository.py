@@ -36,12 +36,14 @@ class HhVacancyRepository:
     def __init__(
         self,
         browser_session: PlaywrightBrowserSession,
-        area: int,
+        area: Optional[int],
         max_results: int,
+        search_pages: int,
     ) -> None:
         self._browser_session = browser_session
         self._area = area
         self._max_results = max_results
+        self._search_pages = search_pages
 
     def __enter__(self) -> "HhVacancyRepository":
         self._browser_session.start()
@@ -51,23 +53,39 @@ class HhVacancyRepository:
         self._browser_session.close()
 
     def search(self, keyword: str) -> List[VacancySummary]:
-        search_url = (
+        vacancies: List[VacancySummary] = []
+        seen_urls: Set[str] = set()
+
+        for page_number in range(self._search_pages):
+            search_url = self._build_search_url(keyword, page_number)
+            page = self._browser_session.open_page(search_url)
+            try:
+                cards = self._first_locator_with_items(page, self.SEARCH_TITLE_SELECTORS)
+                if cards is None:
+                    if page_number == 0:
+                        logger.warning("No vacancy cards found for keyword %s", keyword)
+                    break
+
+                added = self._parse_search_cards(cards, vacancies, seen_urls)
+                if added == 0:
+                    break
+
+                if len(vacancies) >= self._max_results:
+                    return vacancies[: self._max_results]
+            finally:
+                self._browser_session.close_page(page)
+
+        return vacancies[: self._max_results]
+
+    def _build_search_url(self, keyword: str, page_number: int) -> str:
+        area_query = f"&area={self._area}" if self._area is not None else ""
+        return (
             "https://hh.ru/search/vacancy"
             f"?text={quote_plus(keyword)}"
-            f"&area={self._area}"
+            f"{area_query}"
             "&search_field=name"
+            f"&page={page_number}"
         )
-
-        page = self._browser_session.open_page(search_url)
-        try:
-            cards = self._first_locator_with_items(page, self.SEARCH_TITLE_SELECTORS)
-            if cards is None:
-                logger.warning("No vacancy cards found for keyword %s", keyword)
-                return []
-
-            return self._parse_search_cards(cards)
-        finally:
-            self._browser_session.close_page(page)
 
     def get_details(self, url: str) -> VacancyDetails:
         page = self._browser_session.open_page(url)
@@ -90,10 +108,14 @@ class HhVacancyRepository:
         finally:
             self._browser_session.close_page(page)
 
-    def _parse_search_cards(self, cards: Locator) -> List[VacancySummary]:
-        vacancies: List[VacancySummary] = []
-        seen_urls: Set[str] = set()
-        count = min(cards.count(), self._max_results)
+    def _parse_search_cards(
+        self,
+        cards: Locator,
+        vacancies: List[VacancySummary],
+        seen_urls: Set[str],
+    ) -> int:
+        added = 0
+        count = cards.count()
 
         for index in range(count):
             card = cards.nth(index)
@@ -105,8 +127,12 @@ class HhVacancyRepository:
 
             seen_urls.add(url)
             vacancies.append(VacancySummary(title=title, url=url))
+            added += 1
 
-        return vacancies
+            if len(vacancies) >= self._max_results:
+                break
+
+        return added
 
     @staticmethod
     def _first_locator_with_items(
