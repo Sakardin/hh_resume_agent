@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from reports.html_report_writer import HtmlReportWriter
+from reports.markdown_preview_writer import MarkdownPreviewWriter
 from reports.models import VacancyReportItem
 from reports.report_writer import JsonReportWriter
 
@@ -29,6 +31,34 @@ class JsonReportWriterTest(unittest.TestCase):
             self.assertEqual(payload[0]["score"], 91)
             self.assertEqual(payload[0]["markdown"], "output/resume.md")
             self.assertEqual(payload[0]["pdf"], "output/resume.pdf")
+
+    def test_write_html_report_items(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "report.html"
+            json_path = Path(directory) / "report.json"
+            markdown_path = Path(directory) / "resume.md"
+            markdown_path.write_text("# Resume\n\ncontent", encoding="utf-8")
+            MarkdownPreviewWriter().write(markdown_path)
+            item = VacancyReportItem(
+                score=91,
+                title="QA Engineer",
+                company="Example",
+                url="https://hh.ru/vacancy/1",
+                markdown=markdown_path,
+                pdf=Path(directory) / "resume.pdf",
+                strong_matches=["QA"],
+                gaps=["No mobile testing"],
+                reason="Good match",
+            )
+
+            HtmlReportWriter().write([item], output_path, json_path)
+
+            payload = output_path.read_text(encoding="utf-8")
+            self.assertIn("QA Engineer", payload)
+            self.assertIn("https://hh.ru/vacancy/1", payload)
+            self.assertIn("report.json", payload)
+            self.assertIn("resume.md", payload)
+            self.assertIn("resume.resume.html", payload)
 
 
 if __name__ == "__main__":

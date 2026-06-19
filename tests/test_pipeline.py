@@ -5,7 +5,7 @@ from pathlib import Path
 
 from config import AppConfig
 from pipeline import ResumePipeline
-from reports import JsonReportWriter, SeenVacancyStore
+from reports import HtmlReportWriter, JsonReportWriter, MarkdownPreviewWriter, SeenVacancyStore
 from resume.models import MatchScore, ResumeAdaptationResult
 from vacancies.models import VacancyDetails, VacancySummary
 
@@ -59,6 +59,14 @@ class _DummyMarkdownExporter:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(markdown_text, encoding="utf-8")
         return output_path
+
+
+class _DummyReportOpener:
+    def __init__(self) -> None:
+        self.opened_paths = []
+
+    def open(self, path: Path) -> None:
+        self.opened_paths.append(path)
 
 
 class _LowScoreResumeService:
@@ -133,9 +141,10 @@ class ResumePipelineTest(unittest.TestCase):
                 ollama_base_url="http://localhost",
                 llm_debug=False,
                 llm_log_preview_chars=800,
-                hh_area=1002,
+                hh_area=None,
                 min_match_score=70,
                 max_results_per_keyword=10,
+                search_pages_per_keyword=5,
                 headless=True,
                 browser_profile_dir=root / "browser_profile",
                 output_dir=output_dir,
@@ -147,17 +156,21 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
+                open_report_in_browser=True,
             )
             repository = _DummyRepository(
                 vacancies=[
                     VacancySummary(title="Seen vacancy", url="https://hh.ru/vacancy/1"),
-                    VacancySummary(title="New vacancy", url="https://hh.ru/vacancy/2"),
+                    VacancySummary(
+                        title="New vacancy",
+                        url="https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list",
+                    ),
                 ],
                 details_by_url={
-                    "https://hh.ru/vacancy/2": VacancyDetails(
+                    "https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list": VacancyDetails(
                         title="New vacancy",
                         company="Example",
-                        url="https://hh.ru/vacancy/2",
+                        url="https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list",
                         description="desc",
                         key_skills=["QA"],
                     )
@@ -165,6 +178,7 @@ class ResumePipelineTest(unittest.TestCase):
             )
 
             resume_service = _DummyResumeService()
+            report_opener = _DummyReportOpener()
 
             pipeline = ResumePipeline(
                 config=config,
@@ -173,21 +187,32 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
                 seen_vacancy_store=seen_store,
+                report_opener=report_opener,
             )
 
             report_path = pipeline.run()
             saved_urls = seen_store.load()
+            html_report_path = report_path.with_suffix(".html")
+            resume_preview_path = report_path.parent / "New_vacancy.resume.html"
 
-            self.assertEqual(repository.requested_urls, ["https://hh.ru/vacancy/2"])
+            self.assertEqual(
+                repository.requested_urls,
+                ["https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list"],
+            )
             self.assertEqual(
                 saved_urls,
                 {"https://hh.ru/vacancy/1", "https://hh.ru/vacancy/2"},
             )
             self.assertEqual(resume_service.target_languages, ["English"])
             self.assertTrue(report_path.exists())
+            self.assertTrue(html_report_path.exists())
+            self.assertTrue(resume_preview_path.exists())
+            self.assertEqual(report_opener.opened_paths, [html_report_path])
 
-    def test_run_marks_low_score_vacancy_as_seen_and_skips_export(self) -> None:
+    def test_run_skips_low_score_vacancy_without_marking_it_as_seen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output_dir = root / "output"
@@ -206,9 +231,10 @@ class ResumePipelineTest(unittest.TestCase):
                 ollama_base_url="http://localhost",
                 llm_debug=False,
                 llm_log_preview_chars=800,
-                hh_area=1002,
+                hh_area=None,
                 min_match_score=70,
                 max_results_per_keyword=10,
+                search_pages_per_keyword=5,
                 headless=True,
                 browser_profile_dir=root / "browser_profile",
                 output_dir=output_dir,
@@ -220,6 +246,7 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
+                open_report_in_browser=True,
             )
             repository = _DummyRepository(
                 vacancies=[VacancySummary(title="Low score vacancy", url="https://hh.ru/vacancy/3")],
@@ -234,6 +261,7 @@ class ResumePipelineTest(unittest.TestCase):
                 },
             )
             resume_service = _LowScoreResumeService()
+            report_opener = _DummyReportOpener()
 
             pipeline = ResumePipeline(
                 config=config,
@@ -242,16 +270,22 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
                 seen_vacancy_store=seen_store,
+                report_opener=report_opener,
             )
 
             report_path = pipeline.run()
             saved_urls = seen_store.load()
             report_payload = report_path.read_text(encoding="utf-8")
+            html_report_path = report_path.with_suffix(".html")
 
-            self.assertEqual(saved_urls, {"https://hh.ru/vacancy/3"})
+            self.assertEqual(saved_urls, set())
             self.assertEqual(resume_service.adapt_calls, 0)
             self.assertEqual(report_payload.strip(), "[]")
+            self.assertTrue(html_report_path.exists())
+            self.assertEqual(report_opener.opened_paths, [html_report_path])
 
     def test_log_llm_inputs_writes_resume_and_vacancy_previews(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -261,9 +295,10 @@ class ResumePipelineTest(unittest.TestCase):
                 ollama_base_url="http://localhost",
                 llm_debug=True,
                 llm_log_preview_chars=200,
-                hh_area=1002,
+                hh_area=None,
                 min_match_score=70,
                 max_results_per_keyword=10,
+                search_pages_per_keyword=5,
                 headless=True,
                 browser_profile_dir=root / "browser_profile",
                 output_dir=root / "output",
@@ -275,6 +310,7 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
+                open_report_in_browser=True,
             )
             pipeline = ResumePipeline(
                 config=config,
@@ -283,7 +319,10 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
                 seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
+                report_opener=None,
             )
             vacancy = VacancyDetails(
                 title="QA Engineer",

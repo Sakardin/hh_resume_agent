@@ -8,7 +8,15 @@ from browser import PlaywrightBrowserSession
 from config import AppConfig
 from export import FileMarkdownExporter, MarkdownExporter, PdfExporter
 from llm import JsonResponseParser, OllamaClient
-from reports import JsonReportWriter, SeenVacancyStore, VacancyReportItem
+from reports import (
+    BrowserReportOpener,
+    HtmlReportWriter,
+    JsonReportWriter,
+    MarkdownPreviewWriter,
+    SeenVacancyStore,
+    VacancyReportItem,
+    normalize_vacancy_url,
+)
 from resume import MatchScore, ResumeAdaptationResult, ResumeService
 from utils import (
     clean_filename,
@@ -32,7 +40,10 @@ class ResumePipeline:
         markdown_exporter: MarkdownExporter,
         pdf_exporter: Optional[PdfExporter],
         report_writer: JsonReportWriter,
+        html_report_writer: HtmlReportWriter,
+        markdown_preview_writer: MarkdownPreviewWriter,
         seen_vacancy_store: SeenVacancyStore,
+        report_opener: Optional[BrowserReportOpener],
     ) -> None:
         self._config = config
         self._vacancy_repository = vacancy_repository
@@ -40,7 +51,10 @@ class ResumePipeline:
         self._markdown_exporter = markdown_exporter
         self._pdf_exporter = pdf_exporter
         self._report_writer = report_writer
+        self._html_report_writer = html_report_writer
+        self._markdown_preview_writer = markdown_preview_writer
         self._seen_vacancy_store = seen_vacancy_store
+        self._report_opener = report_opener
 
     def run(self) -> Path:
         resume_text = load_text_file(self._config.resume_path)
@@ -52,9 +66,12 @@ class ResumePipeline:
 
         report_items: List[VacancyReportItem] = []
         report_path = run_output_dir / "report.json"
+        html_report_path = run_output_dir / "report.html"
 
         if not keywords:
             self._report_writer.write(report_items, report_path)
+            self._html_report_writer.write(report_items, html_report_path, report_path)
+            self._open_report(html_report_path)
             logger.info("No keywords found. Empty report written to %s", report_path)
             return report_path
 
@@ -67,22 +84,21 @@ class ResumePipeline:
                 vacancies = self._vacancy_repository.search(keyword)
 
                 for summary in vacancies:
-                    if not summary.url:
+                    normalized_summary_url = normalize_vacancy_url(summary.url)
+                    if not normalized_summary_url:
                         continue
 
-                    if summary.url in persisted_seen_urls:
+                    if normalized_summary_url in persisted_seen_urls:
                         logger.info("Skipping previously viewed vacancy: %s", summary.url)
                         continue
 
-                    if summary.url in seen_urls:
+                    if normalized_summary_url in seen_urls:
                         continue
 
-                    seen_urls.add(summary.url)
+                    seen_urls.add(normalized_summary_url)
                     vacancy = self._load_vacancy(summary.url)
                     if vacancy is None:
                         continue
-
-                    persisted_seen_urls.add(summary.url)
 
                     vacancy_text = vacancy.to_prompt_text()
                     match_score = self._score_vacancy(resume_text, vacancy_text, vacancy)
@@ -112,6 +128,7 @@ class ResumePipeline:
                     markdown_path = run_output_dir / f"{base_name}.md"
                     output_markdown = adaptation_result.render_output_markdown()
                     self._markdown_exporter.export(output_markdown, markdown_path)
+                    self._markdown_preview_writer.write(markdown_path)
                     pdf_path = self._export_pdf_path(run_output_dir, base_name, output_markdown)
 
                     report_items.append(
@@ -122,9 +139,12 @@ class ResumePipeline:
                             pdf_path=pdf_path,
                         )
                     )
+                    persisted_seen_urls.add(normalized_summary_url)
 
         self._report_writer.write(report_items, report_path)
+        self._html_report_writer.write(report_items, html_report_path, report_path)
         self._seen_vacancy_store.save(persisted_seen_urls)
+        self._open_report(html_report_path)
         logger.info("Done. Report written to %s", report_path)
         return report_path
 
@@ -245,6 +265,15 @@ class ResumePipeline:
             return normalized
         return normalized[: self._config.llm_log_preview_chars] + "..."
 
+    def _open_report(self, html_report_path: Path) -> None:
+        if not self._config.open_report_in_browser or self._report_opener is None:
+            return
+
+        try:
+            self._report_opener.open(html_report_path)
+        except Exception as error:
+            logger.warning("Could not open HTML report %s: %s", html_report_path, error)
+
 
 def create_pipeline(config: AppConfig) -> ResumePipeline:
     browser_session = PlaywrightBrowserSession(
@@ -258,6 +287,7 @@ def create_pipeline(config: AppConfig) -> ResumePipeline:
         browser_session=browser_session,
         area=config.hh_area,
         max_results=config.max_results_per_keyword,
+        search_pages=config.search_pages_per_keyword,
     )
     llm_client = OllamaClient(
         base_url=config.ollama_base_url,
@@ -285,5 +315,8 @@ def create_pipeline(config: AppConfig) -> ResumePipeline:
         markdown_exporter=FileMarkdownExporter(),
         pdf_exporter=pdf_exporter,
         report_writer=JsonReportWriter(),
+        html_report_writer=HtmlReportWriter(),
+        markdown_preview_writer=MarkdownPreviewWriter(),
         seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
+        report_opener=BrowserReportOpener() if config.open_report_in_browser else None,
     )
