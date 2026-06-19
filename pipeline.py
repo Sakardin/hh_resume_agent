@@ -265,15 +265,6 @@ class ResumePipeline:
             return normalized
         return normalized[: self._config.llm_log_preview_chars] + "..."
 
-    def _open_report(self, html_report_path: Path) -> None:
-        if not self._config.open_report_in_browser or self._report_opener is None:
-            return
-
-        try:
-            self._report_opener.open(html_report_path)
-        except Exception as error:
-            logger.warning("Could not open HTML report %s: %s", html_report_path, error)
-
 
 def create_pipeline(config: AppConfig) -> ResumePipeline:
     browser_session = PlaywrightBrowserSession(
