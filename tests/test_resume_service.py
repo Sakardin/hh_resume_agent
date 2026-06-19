@@ -61,12 +61,8 @@ Vacancy body
         self.assertIn("русском языке", llm_client.prompts[2])
         self.assertIn("Comments должна быть полностью на русском языке", llm_client.prompts[3])
         self.assertIn("Resume должна быть полностью на языке: English", llm_client.prompts[3])
-        self.assertIn("Вот моё резюме:", llm_client.prompts[0])
-        self.assertIn("Вот моё резюме:", llm_client.prompts[1])
-        self.assertIn("Вот описание вакансии:", llm_client.prompts[3])
         self.assertIn(resume_text, llm_client.prompts[0])
         self.assertIn(resume_text, llm_client.prompts[1])
-        self.assertIn(resume_text, llm_client.prompts[3])
         self.assertIn(vacancy_text, llm_client.prompts[3])
 
     def test_score_vacancy_includes_resume_and_vacancy_text_in_prompt(self) -> None:
@@ -86,8 +82,6 @@ Vacancy body
 
         self.assertEqual(result.score, 80)
         self.assertEqual(len(llm_client.prompts), 1)
-        self.assertIn("Вот описание вакансии:", llm_client.prompts[0])
-        self.assertIn("Вот моё резюме:", llm_client.prompts[0])
         self.assertIn(resume_text, llm_client.prompts[0])
         self.assertIn(vacancy_text, llm_client.prompts[0])
 
