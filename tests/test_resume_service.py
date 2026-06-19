@@ -18,6 +18,8 @@ class _SequentialLlmClient:
 
 class ResumeServiceTest(unittest.TestCase):
     def test_adapt_resume_with_comments_runs_prompt_chain(self) -> None:
+        resume_text = "Original resume"
+        vacancy_text = "Vacancy text"
         llm_client = _SequentialLlmClient(
             [
                 "Weak wording in summary",
@@ -32,8 +34,8 @@ class ResumeServiceTest(unittest.TestCase):
         )
 
         result = service.adapt_resume_with_comments(
-            resume_text="Original resume",
-            vacancy_text="Vacancy text",
+            resume_text=resume_text,
+            vacancy_text=vacancy_text,
             user_prompt="""
 ПРОМПТ 1: Review
 Review body
@@ -59,6 +61,29 @@ Vacancy body
         self.assertIn("русском языке", llm_client.prompts[2])
         self.assertIn("Comments должна быть полностью на русском языке", llm_client.prompts[3])
         self.assertIn("Resume должна быть полностью на языке: English", llm_client.prompts[3])
+        self.assertIn(resume_text, llm_client.prompts[0])
+        self.assertIn(resume_text, llm_client.prompts[1])
+        self.assertIn(vacancy_text, llm_client.prompts[3])
+
+    def test_score_vacancy_includes_resume_and_vacancy_text_in_prompt(self) -> None:
+        resume_text = "Resume body with QA automation"
+        vacancy_text = "Vacancy body with Python and Playwright"
+        llm_client = _SequentialLlmClient(
+            [
+                '{"score": 80, "strong_matches": ["QA"], "gaps": [], "reason": "Relevant"}',
+            ]
+        )
+        service = ResumeService(
+            llm_client=llm_client,
+            json_parser=JsonResponseParser(),
+        )
+
+        result = service.score_vacancy(resume_text=resume_text, vacancy_text=vacancy_text)
+
+        self.assertEqual(result.score, 80)
+        self.assertEqual(len(llm_client.prompts), 1)
+        self.assertIn(resume_text, llm_client.prompts[0])
+        self.assertIn(vacancy_text, llm_client.prompts[0])
 
 
 if __name__ == "__main__":
