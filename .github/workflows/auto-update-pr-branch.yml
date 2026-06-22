@@ -32,11 +32,7 @@ jobs:
           git remote add upstream https://github.com/${{ github.repository }}.git
           git fetch upstream main
 
-          git merge upstream/main --no-edit || {
-            echo "Conflict detected. Manual resolve needed."
-            git merge --abort
-            exit 0
-          }
+          git merge upstream/main --no-edit -X ours
 
           git push
 
@@ -105,11 +101,7 @@ jobs:
 
             git checkout -B "$ref" FETCH_HEAD
 
-            if ! git merge origin/main --no-edit; then
-              echo "Conflict detected in PR #$number. Skipping."
-              git merge --abort || true
-              continue
-            fi
+            git merge origin/main --no-edit -X ours
 
             if ! git push "$remote_name" "HEAD:$ref"; then
               echo "Could not push PR #$number branch. Skipping."
