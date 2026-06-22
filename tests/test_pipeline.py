@@ -206,7 +206,7 @@ class ResumePipelineTest(unittest.TestCase):
                 saved_urls,
                 {"https://hh.ru/vacancy/1", "https://hh.ru/vacancy/2"},
             )
-            self.assertEqual(resume_service.target_languages, ["English"])
+            self.assertEqual(resume_service.target_languages, [])
             self.assertTrue(report_path.exists())
             self.assertTrue(html_report_path.exists())
             self.assertTrue(resume_preview_path.exists())
@@ -345,6 +345,83 @@ class ResumePipelineTest(unittest.TestCase):
             self.assertIn("Вот описание вакансии:", joined_logs)
             self.assertIn("QA Engineer", joined_logs)
 
+    def test_generate_resume_for_report_item_updates_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output_dir = root / "output"
+            seen_path = output_dir / "seen_vacancies.json"
+            seen_store = SeenVacancyStore(seen_path)
+
+            resume_path = root / "resume.md"
+            prompts_path = root / "prompts.md"
+            keywords_path = root / "keywords.txt"
+            resume_path.write_text("resume", encoding="utf-8")
+            prompts_path.write_text("prompt", encoding="utf-8")
+            keywords_path.write_text("qa", encoding="utf-8")
+
+            config = AppConfig(
+                ollama_model="model",
+                ollama_base_url="http://localhost",
+                llm_debug=False,
+                llm_log_preview_chars=800,
+                hh_area=1002,
+                min_match_score=70,
+                max_results_per_keyword=10,
+                headless=True,
+                browser_profile_dir=root / "browser_profile",
+                output_dir=output_dir,
+                seen_vacancies_path=seen_path,
+                resume_path=resume_path,
+                prompts_path=prompts_path,
+                keywords_path=keywords_path,
+                page_timeout_ms=1000,
+                retry_attempts=1,
+                retry_delay_ms=0,
+                generate_pdf=False,
+                generate_resume_on_match=False,
+            )
+            repository = _DummyRepository(
+                vacancies=[VacancySummary(title="QA vacancy", url="https://hh.ru/vacancy/4")],
+                details_by_url={
+                    "https://hh.ru/vacancy/4": VacancyDetails(
+                        title="QA vacancy",
+                        company="Example",
+                        url="https://hh.ru/vacancy/4",
+                        description="desc",
+                        key_skills=["QA"],
+                    )
+                },
+            )
+            resume_service = _DummyResumeService()
+
+            pipeline = ResumePipeline(
+                config=config,
+                vacancy_repository=repository,
+                resume_service=resume_service,
+                markdown_exporter=_DummyMarkdownExporter(),
+                pdf_exporter=None,
+                report_writer=JsonReportWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
+                resume_generation_script_writer=ResumeGenerationScriptWriter(),
+                seen_vacancy_store=seen_store,
+                project_root=root,
+            )
+
+            report_html_path = pipeline.run()
+            report_dir = report_html_path.parent
+
+            generated_markdown = pipeline.generate_resume_for_report_item(
+                report_dir=report_dir,
+                vacancy_url="https://hh.ru/vacancy/4",
+            )
+
+            self.assertTrue(generated_markdown.exists())
+            self.assertTrue(generated_markdown.with_suffix(".resume.html").exists())
+            report_payload = (report_dir / "report.json").read_text(encoding="utf-8")
+            self.assertIn(str(generated_markdown), report_payload)
+            self.assertEqual(resume_service.target_languages, ["English"])
+
     def test_log_llm_inputs_writes_resume_and_vacancy_previews(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -367,6 +444,7 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
+                generate_resume_on_match=False,
             )
             pipeline = ResumePipeline(
                 config=config,
@@ -375,7 +453,11 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
+                html_report_writer=_DummyHtmlReportWriter(),
+                markdown_preview_writer=_DummyMarkdownPreviewWriter(),
+                resume_generation_script_writer=_DummyResumeGenerationScriptWriter(),
                 seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
+                project_root=root,
             )
             vacancy = VacancyDetails(
                 title="QA Engineer",

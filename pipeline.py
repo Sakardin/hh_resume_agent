@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import datetime
@@ -73,10 +74,11 @@ class ResumePipeline:
             self._html_report_writer.write(report_items, html_report_path, report_path)
             self._open_report(html_report_path)
             logger.info("No keywords found. Empty report written to %s", report_path)
-            return report_path
+            return report_html_path
 
         seen_urls: Set[str] = set()
         used_file_names: Set[str] = set()
+        used_script_names: Set[str] = set()
 
         with self._vacancy_repository:
             for keyword in keywords:
@@ -115,11 +117,17 @@ class ResumePipeline:
                     if match_score.score < self._config.min_match_score:
                         continue
 
-                    adaptation_result = self._adapt_resume(
-                        resume_text,
-                        vacancy_text,
-                        prompts_text,
-                        vacancy,
+                    script_path = self._write_generation_script(
+                        run_output_dir=run_output_dir,
+                        vacancy=vacancy,
+                        used_script_names=used_script_names,
+                    )
+                    report_item = VacancyReportItem.from_result(
+                        vacancy=vacancy,
+                        match_score=match_score,
+                        markdown_path=None,
+                        pdf_path=None,
+                        generate_resume_script_path=script_path,
                     )
                     if adaptation_result is None:
                         continue
@@ -131,12 +139,15 @@ class ResumePipeline:
                     self._markdown_preview_writer.write(markdown_path)
                     pdf_path = self._export_pdf_path(run_output_dir, base_name, output_markdown)
 
-                    report_items.append(
-                        VacancyReportItem.from_result(
+                    if self._config.generate_resume_on_match:
+                        generated_item = self._generate_resume_artifacts(
+                            report_item=report_item,
                             vacancy=vacancy,
-                            match_score=match_score,
-                            markdown_path=markdown_path,
-                            pdf_path=pdf_path,
+                            resume_text=resume_text,
+                            vacancy_text=vacancy_text,
+                            prompts_text=prompts_text,
+                            run_output_dir=run_output_dir,
+                            used_file_names=used_file_names,
                         )
                     )
                     persisted_seen_urls.add(normalized_summary_url)
@@ -198,6 +209,50 @@ class ResumePipeline:
             logger.warning("Could not adapt resume for %s: %s", vacancy.title, error)
             return None
 
+    def _generate_resume_artifacts(
+        self,
+        report_item: VacancyReportItem,
+        vacancy: VacancyDetails,
+        resume_text: str,
+        vacancy_text: str,
+        prompts_text: str,
+        run_output_dir: Path,
+        used_file_names: Set[str],
+    ) -> Optional[VacancyReportItem]:
+        adaptation_result = self._adapt_resume(
+            resume_text=resume_text,
+            vacancy_text=vacancy_text,
+            prompts_text=prompts_text,
+            vacancy=vacancy,
+        )
+        if adaptation_result is None:
+            return None
+
+        markdown_path = report_item.markdown
+        if markdown_path is None:
+            base_name = self._unique_output_name(vacancy.title, used_file_names)
+            markdown_path = run_output_dir / f"{base_name}.md"
+        else:
+            used_file_names.add(markdown_path.stem)
+
+        output_markdown = adaptation_result.render_output_markdown()
+        self._markdown_exporter.export(output_markdown, markdown_path)
+        self._markdown_preview_writer.write(markdown_path)
+        pdf_path = self._export_pdf_path(run_output_dir, markdown_path.stem, output_markdown)
+
+        return VacancyReportItem(
+            score=report_item.score,
+            title=vacancy.title,
+            company=vacancy.company,
+            url=vacancy.url,
+            markdown=markdown_path,
+            pdf=pdf_path,
+            generate_resume_script=report_item.generate_resume_script,
+            strong_matches=report_item.strong_matches,
+            gaps=report_item.gaps,
+            reason=report_item.reason,
+        )
+
     def _export_pdf_path(
         self,
         run_output_dir: Path,
@@ -214,6 +269,49 @@ class ResumePipeline:
         except Exception as error:
             logger.warning("Could not export PDF %s: %s", pdf_path, error)
             return None
+
+    def _write_reports(
+        self,
+        report_items: List[VacancyReportItem],
+        report_path: Path,
+        report_html_path: Path,
+    ) -> None:
+        self._report_writer.write(report_items, report_path)
+        self._html_report_writer.write(report_items, report_html_path, report_path)
+
+    def _write_generation_script(
+        self,
+        run_output_dir: Path,
+        vacancy: VacancyDetails,
+        used_script_names: Set[str],
+    ) -> Path:
+        base_name = self._unique_output_name(
+            f"generate_resume_{vacancy.title}",
+            used_script_names,
+        )
+        script_path = run_output_dir / f"{base_name}.command"
+        return self._resume_generation_script_writer.write(
+            output_path=script_path,
+            project_root=self._project_root,
+            report_dir=run_output_dir,
+            vacancy_url=vacancy.url,
+        )
+
+    @staticmethod
+    def _load_report_items(report_path: Path) -> List[VacancyReportItem]:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+        return [VacancyReportItem.from_dict(item) for item in payload]
+
+    @staticmethod
+    def _find_report_item_index(report_items: List[VacancyReportItem], vacancy_url: str) -> int:
+        for index, item in enumerate(report_items):
+            if item.url == vacancy_url:
+                return index
+        raise ValueError(f"Vacancy not found in report: {vacancy_url}")
+
+    @staticmethod
+    def _existing_output_names(report_items: List[VacancyReportItem]) -> Set[str]:
+        return {item.markdown.stem for item in report_items if item.markdown is not None}
 
     @staticmethod
     def _create_run_output_dir(base_output_dir: Path, now: Optional[datetime] = None) -> Path:

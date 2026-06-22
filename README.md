@@ -1,6 +1,6 @@
 # HH Resume Agent
 
-Локальный агент для поиска вакансий на hh.ru через браузер, оценки совпадения с резюме через Ollama и генерации адаптированного резюме в PDF.
+Локальный агент для поиска вакансий на hh.ru через браузер, оценки совпадения с резюме через Ollama и генерации адаптированного резюме в Markdown.
 
 ## Что внутри
 
@@ -12,14 +12,14 @@
 - `vacancies/` — поиск и парсинг вакансий hh.ru
 - `llm/` — клиент Ollama и парсинг JSON-ответов
 - `resume/` — оценка вакансий и адаптация резюме
-- `export/` — Markdown/PDF экспорт через заменяемые интерфейсы
-- `reports/` — генерация `report.json`
+- `export/` — экспорт через заменяемые интерфейсы
+- `reports/` — генерация `report.json`, `report.html` и helper-скриптов
 - `utils/` — общие утилиты
 - `pipeline.py` — orchestration без привязки к CLI
 - `main.py` — короткий entrypoint
 - `.env.example` — пример настроек
 
-Файлы `hh_browser.py`, `resume_agent.py` и `pdf_generator.py` оставлены как совместимые обертки над новой структурой.
+Файлы `hh_browser.py` и `resume_agent.py` оставлены как совместимые обертки над новой структурой.
 
 ## Папка `data`
 
@@ -33,6 +33,18 @@
 
 - `data/resume_master.md` — полное исходное резюме, на основе которого делается адаптация
 - `data/keywords.txt` — список ключевых слов, по которым ищутся вакансии
+
+Проще всего создать их так:
+
+```bash
+cp data/resume_master.example.md data/resume_master.md
+cp data/keywords.example.txt data/keywords.txt
+```
+
+После этого заполнить:
+
+- `data/resume_master.md` своим резюме
+- `data/keywords.txt` своими поисковыми запросами, по одному на строку
 
 Файлы `data/resume_master.md` и `data/keywords.txt` игнорируются Git и не должны коммититься, потому что содержат персональные данные и локальные настройки поиска.
 
@@ -54,6 +66,24 @@ ollama --version
 
 ```bash
 ollama pull qwen3:8b
+```
+
+Запустить Ollama API:
+
+```bash
+ollama serve
+```
+
+По умолчанию проект обращается к:
+
+```text
+http://localhost:11434/v1
+```
+
+Проверить, что сервер Ollama поднят:
+
+```bash
+curl http://localhost:11434/api/tags
 ```
 
 ## 2. Подготовить Python
@@ -115,10 +145,10 @@ KEYWORDS_PATH=data/keywords.txt
 
 ## 5. Запуск
 
-В одном терминале запустить Ollama:
+В одном терминале запустить Ollama API:
 
 ```bash
-ollama run qwen3:8b
+ollama serve
 ```
 
 Во втором терминале:
@@ -146,8 +176,6 @@ output/
 Там появятся:
 
 - подпапка запуска с датой и временем, например `output/2026-06-17_10-45-30/`
-- внутри нее адаптированные резюме `.md` с комментариями рекрутера и итоговой версией резюме
-- внутри нее адаптированные резюме `.pdf`
 - внутри нее `report.json`
 - внутри нее `report.html` с кликабельными ссылками на вакансию HH, Markdown, PDF и `report.json`
 
@@ -191,6 +219,14 @@ LLM_DEBUG=true
 - модель;
 - размер prompt/response;
 - укороченный preview prompt/response.
+
+По умолчанию резюме не генерируются во время основного прогона. Для этого отчет сначала собирает только score, reason, strong matches и gaps.
+
+Если нужно генерировать резюме сразу для каждой подходящей вакансии, включить:
+
+```env
+GENERATE_RESUME_ON_MATCH=true
+```
 
 ## Проверки
 

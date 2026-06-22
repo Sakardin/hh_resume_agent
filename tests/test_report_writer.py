@@ -20,6 +20,7 @@ class JsonReportWriterTest(unittest.TestCase):
                 url="https://hh.ru/vacancy/1",
                 markdown=Path("output/resume.md"),
                 pdf=Path("output/resume.pdf"),
+                generate_resume_script=Path("output/generate.command"),
                 strong_matches=["QA"],
                 gaps=[],
                 reason="Good match",
@@ -31,6 +32,7 @@ class JsonReportWriterTest(unittest.TestCase):
             self.assertEqual(payload[0]["score"], 91)
             self.assertEqual(payload[0]["markdown"], "output/resume.md")
             self.assertEqual(payload[0]["pdf"], "output/resume.pdf")
+            self.assertEqual(payload[0]["generate_resume_script"], "output/generate.command")
 
     def test_write_html_report_items(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
