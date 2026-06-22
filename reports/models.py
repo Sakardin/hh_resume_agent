@@ -26,7 +26,7 @@ class VacancyReportItem:
         match_score: MatchScore,
         markdown_path: Optional[Path],
         pdf_path: Optional[Path],
-        generate_resume_script_path: Optional[Path] = None,
+        generate_resume_script_path: Optional[Path],
     ) -> "VacancyReportItem":
         return cls(
             score=match_score.score,
@@ -51,8 +51,8 @@ class VacancyReportItem:
             markdown=_optional_path(data.get("markdown")),
             pdf=_optional_path(data.get("pdf")),
             generate_resume_script=_optional_path(data.get("generate_resume_script")),
-            strong_matches=[str(item).strip() for item in data.get("strong_matches", [])],
-            gaps=[str(item).strip() for item in data.get("gaps", [])],
+            strong_matches=[str(item) for item in data.get("strong_matches", [])],
+            gaps=[str(item) for item in data.get("gaps", [])],
             reason=str(data.get("reason", "")),
         )
 
@@ -78,7 +78,7 @@ class VacancyReportItem:
 def _optional_path(value: Any) -> Optional[Path]:
     if value is None:
         return None
-    normalized = str(value).strip()
-    if not normalized:
+    text = str(value).strip()
+    if not text:
         return None
-    return Path(normalized)
+    return Path(text)

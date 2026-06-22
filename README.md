@@ -1,21 +1,16 @@
 # HH Resume Agent
 
-Локальный агент для поиска вакансий на `hh.ru`, оценки их релевантности по резюме и генерации адаптированного резюме через локальную LLM.
-
-Проект работает в двух режимах:
-
-- основной прогон ищет вакансии, считает `score`, `reason`, `strong_matches`, `gaps` и сохраняет отчет;
-- генерация резюме делается по запросу из `report.html` или через CLI-команду `generate`.
+Локальный агент для поиска вакансий на hh.ru через браузер, оценки совпадения с резюме через Ollama и генерации адаптированного резюме в Markdown.
 
 ## Что внутри
 
 - `config/` — загрузка настроек из `.env`
 - `browser/` — Playwright-сессия, retries, persistent profile
-- `vacancies/` — поиск и парсинг вакансий HH
-- `llm/` — клиент OpenAI-compatible API для Ollama / LM Studio
-- `resume/` — скоринг вакансий и адаптация резюме
-- `export/` — Markdown/PDF экспорт
-- `reports/` — `report.json`, `report.html`, HTML preview и helper-скрипты
+- `vacancies/` — поиск и парсинг вакансий hh.ru
+- `llm/` — клиент Ollama и парсинг JSON-ответов
+- `resume/` — оценка вакансий и адаптация резюме
+- `export/` — экспорт через заменяемые интерфейсы
+- `reports/` — генерация `report.json`, `report.html` и helper-скриптов
 - `utils/` — общие утилиты
 - `pipeline.py` — основной orchestration
 - `main.py` — короткий entrypoint
@@ -27,9 +22,7 @@
 
 В репозитории есть шаблоны:
 
-- `data/resume_master.example.md`
-- `data/keywords.example.txt`
-- `data/prompts.md`
+Файлы `hh_browser.py` и `resume_agent.py` оставлены как совместимые обертки над новой структурой.
 
 Нужно создать локальные рабочие файлы:
 
@@ -47,7 +40,19 @@ cp data/keywords.example.txt data/keywords.txt
 
 ## LLM Backend
 
-Проект использует OpenAI-compatible HTTP API. Подходит:
+Проще всего создать их так:
+
+```bash
+cp data/resume_master.example.md data/resume_master.md
+cp data/keywords.example.txt data/keywords.txt
+```
+
+После этого заполнить:
+
+- `data/resume_master.md` своим резюме
+- `data/keywords.txt` своими поисковыми запросами, по одному на строку
+
+Файлы `data/resume_master.md` и `data/keywords.txt` игнорируются Git и не должны коммититься, потому что содержат персональные данные и локальные настройки поиска.
 
 - `Ollama`
 - `LM Studio`
@@ -72,19 +77,25 @@ ollama --version
 ollama pull qwen3:8b
 ```
 
-Запустить API:
+Запустить Ollama API:
 
 ```bash
 ollama serve
 ```
 
-По умолчанию проект ожидает endpoint:
+По умолчанию проект обращается к:
 
 ```text
 http://localhost:11434/v1
 ```
 
-Проверить, что сервер поднят:
+Проверить, что сервер Ollama поднят:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+## 2. Подготовить Python
 
 ```bash
 curl http://localhost:11434/api/tags
@@ -181,12 +192,11 @@ KEYWORDS_PATH=data/keywords.txt
 - `GENERATE_RESUME_ON_MATCH=false` означает, что резюме не генерируется в основном прогоне, а создается по запросу из отчета
 - `OPEN_REPORT_IN_BROWSER=true` включает автoоткрытие `report.html` после завершения
 
-## Запуск на macOS / Linux
+В одном терминале запустить Ollama API:
 
-В одном терминале запустить LLM backend:
-
-- для Ollama: `ollama serve`
-- для LM Studio: просто поднять `Local Server`
+```bash
+ollama serve
+```
 
 Во втором терминале:
 
@@ -214,10 +224,9 @@ python -m venv .venv
 
 Установить зависимости:
 
-```powershell
-.venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\playwright install chromium
-```
+- подпапка запуска с датой и временем, например `output/2026-06-17_10-45-30/`
+- внутри нее `report.json`
+- внутри нее `report.html` с кликабельными ссылками на вакансию HH, Markdown, PDF и `report.json`
 
 Подготовить локальные файлы:
 
@@ -315,6 +324,14 @@ Windows:
 - Если модель работает медленно, уменьшить `MAX_RESULTS_PER_KEYWORD`
 - Если слишком много слабых вакансий, увеличить `MIN_MATCH_SCORE`
 - Если нужен полный лог запросов к модели, включить `LLM_DEBUG=true`
+
+По умолчанию резюме не генерируются во время основного прогона. Для этого отчет сначала собирает только score, reason, strong matches и gaps.
+
+Если нужно генерировать резюме сразу для каждой подходящей вакансии, включить:
+
+```env
+GENERATE_RESUME_ON_MATCH=true
+```
 
 ## Проверки
 

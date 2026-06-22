@@ -78,7 +78,7 @@ class ResumePipeline:
             self._write_reports(report_items, report_path, html_report_path)
             self._open_report(html_report_path)
             logger.info("No keywords found. Empty report written to %s", report_path)
-            return html_report_path
+            return report_html_path
 
         seen_urls: Set[str] = set()
         used_file_names: Set[str] = set()
@@ -121,16 +121,17 @@ class ResumePipeline:
                     if match_score.score < self._config.min_match_score:
                         continue
 
+                    script_path = self._write_generation_script(
+                        run_output_dir=run_output_dir,
+                        vacancy=vacancy,
+                        used_script_names=used_script_names,
+                    )
                     report_item = VacancyReportItem.from_result(
                         vacancy=vacancy,
                         match_score=match_score,
                         markdown_path=None,
                         pdf_path=None,
-                        generate_resume_script_path=self._write_generation_script(
-                            run_output_dir=run_output_dir,
-                            vacancy=vacancy,
-                            used_script_names=used_script_names,
-                        ),
+                        generate_resume_script_path=script_path,
                     )
 
                     if self._config.generate_resume_on_match:
@@ -303,10 +304,10 @@ class ResumePipeline:
         self,
         report_items: List[VacancyReportItem],
         report_path: Path,
-        html_report_path: Path,
+        report_html_path: Path,
     ) -> None:
         self._report_writer.write(report_items, report_path)
-        self._html_report_writer.write(report_items, html_report_path, report_path)
+        self._html_report_writer.write(report_items, report_html_path, report_path)
 
     def _write_generation_script(
         self,
@@ -333,9 +334,8 @@ class ResumePipeline:
 
     @staticmethod
     def _find_report_item_index(report_items: List[VacancyReportItem], vacancy_url: str) -> int:
-        normalized_target = normalize_vacancy_url(vacancy_url)
         for index, item in enumerate(report_items):
-            if normalize_vacancy_url(item.url) == normalized_target:
+            if item.url == vacancy_url:
                 return index
         raise ValueError(f"Vacancy not found in report: {vacancy_url}")
 
