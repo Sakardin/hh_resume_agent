@@ -4,10 +4,7 @@
 
 ## Что внутри
 
-- `data/resume_master.md` — базовое резюме
-- `data/prompts.md` — цепочка промптов для разбора, переписывания и адаптации резюме
-- `data/keywords.txt` — ключевые слова поиска
-- `config/` — настройки из `.env`
+- `config/` — загрузка настроек из `.env`
 - `browser/` — Playwright-сессия, retries, persistent profile
 - `vacancies/` — поиск и парсинг вакансий hh.ru
 - `llm/` — клиент Ollama и парсинг JSON-ответов
@@ -15,24 +12,33 @@
 - `export/` — экспорт через заменяемые интерфейсы
 - `reports/` — генерация `report.json`, `report.html` и helper-скриптов
 - `utils/` — общие утилиты
-- `pipeline.py` — orchestration без привязки к CLI
+- `pipeline.py` — основной orchestration
 - `main.py` — короткий entrypoint
-- `.env.example` — пример настроек
+- `cli.py` — CLI-команды
+
+Совместимые обертки `hh_browser.py`, `resume_agent.py` и `pdf_generator.py` сохранены, но основной путь запуска идет через `main.py`.
+
+## Подготовить данные
+
+В репозитории есть шаблоны:
 
 Файлы `hh_browser.py` и `resume_agent.py` оставлены как совместимые обертки над новой структурой.
 
-## Папка `data`
+Нужно создать локальные рабочие файлы:
 
-В репозитории хранятся:
+```bash
+cp data/resume_master.example.md data/resume_master.md
+cp data/keywords.example.txt data/keywords.txt
+```
 
-- `data/resume_master.example.md` — шаблон файла с основным резюме
-- `data/prompts.md` — рабочий файл с промптами для LLM, общий для проекта
-- `data/keywords.example.txt` — шаблон файла со списком поисковых запросов
+После этого заполнить:
 
-Локально нужно создать свои рабочие файлы, без суффикса `.example`:
+- `data/resume_master.md` своим базовым резюме
+- `data/keywords.txt` поисковыми запросами, по одному на строку
 
-- `data/resume_master.md` — полное исходное резюме, на основе которого делается адаптация
-- `data/keywords.txt` — список ключевых слов, по которым ищутся вакансии
+Файлы `data/resume_master.md` и `data/keywords.txt` игнорируются Git.
+
+## LLM Backend
 
 Проще всего создать их так:
 
@@ -48,9 +54,12 @@ cp data/keywords.example.txt data/keywords.txt
 
 Файлы `data/resume_master.md` и `data/keywords.txt` игнорируются Git и не должны коммититься, потому что содержат персональные данные и локальные настройки поиска.
 
-## 1. Установить Ollama
+- `Ollama`
+- `LM Studio`
 
-Скачать:
+### Вариант 1: Ollama
+
+Установить Ollama:
 
 ```text
 https://ollama.com/download
@@ -62,7 +71,7 @@ https://ollama.com/download
 ollama --version
 ```
 
-Установить модель:
+Скачать модель:
 
 ```bash
 ollama pull qwen3:8b
@@ -89,16 +98,52 @@ curl http://localhost:11434/api/tags
 ## 2. Подготовить Python
 
 ```bash
-python -m venv venv
+curl http://localhost:11434/api/tags
 ```
 
-Или:
+### Вариант 2: LM Studio
+
+Если Ollama не используется, можно работать через `LM Studio`.
+
+Что сделать:
+
+1. Установить и открыть `LM Studio`
+2. Скачать локальную instruct/chat модель
+3. Загрузить модель в память
+4. Открыть `Developer` -> `Local Server`
+5. Запустить OpenAI-compatible endpoint
+
+Обычно `LM Studio` поднимает API по адресу:
+
+```text
+http://127.0.0.1:1234/v1
+```
+
+В этом случае в `.env` надо заменить:
+
+```env
+OLLAMA_BASE_URL=http://127.0.0.1:1234/v1
+OLLAMA_MODEL=<имя_модели_из_LM_Studio>
+```
+
+Пример:
+
+```env
+OLLAMA_BASE_URL=http://127.0.0.1:1234/v1
+OLLAMA_MODEL=qwen2.5-7b-instruct
+```
+
+Если используется `LM Studio`, команды `ollama pull` и `ollama serve` не нужны.
+
+## Python и зависимости
+
+Создать виртуальное окружение:
 
 ```bash
 python -m venv .venv
 ```
 
-## 3. Установить зависимости
+Установить зависимости:
 
 ```bash
 .venv/bin/pip install -r requirements.txt
@@ -107,17 +152,15 @@ python -m venv .venv
 
 Если используется `venv`, а не `.venv`, заменить пути соответственно.
 
-## 4. Создать `.env`
+## Настроить `.env`
 
-Скопировать файл:
+Создать `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Для Windows можно просто создать копию вручную.
-
-Настройки по умолчанию:
+Текущие настройки по умолчанию:
 
 ```env
 OLLAMA_MODEL=qwen3:8b
@@ -133,6 +176,7 @@ PAGE_TIMEOUT_MS=60000
 BROWSER_RETRY_ATTEMPTS=2
 BROWSER_RETRY_DELAY_MS=1000
 GENERATE_PDF=true
+GENERATE_RESUME_ON_MATCH=false
 OPEN_REPORT_IN_BROWSER=true
 OUTPUT_DIR=output
 SEEN_VACANCIES_PATH=output/seen_vacancies.json
@@ -141,9 +185,12 @@ PROMPTS_PATH=data/prompts.md
 KEYWORDS_PATH=data/keywords.txt
 ```
 
-`SEARCH_PAGES_PER_KEYWORD=5` — сколько страниц выдачи HH просматривать для каждого ключевого слова, чтобы добираться до новых вакансий, если верхние результаты уже были просмотрены.
+Дополнительно:
 
-## 5. Запуск
+- `HH_AREA` можно задать вручную, если нужен фильтр по региону, например `HH_AREA=1002`
+- `SEARCH_PAGES_PER_KEYWORD=5` задает, сколько страниц выдачи HH просматривать по каждому запросу
+- `GENERATE_RESUME_ON_MATCH=false` означает, что резюме не генерируется в основном прогоне, а создается по запросу из отчета
+- `OPEN_REPORT_IN_BROWSER=true` включает автoоткрытие `report.html` после завершения
 
 В одном терминале запустить Ollama API:
 
@@ -157,68 +204,126 @@ ollama serve
 ./run.sh
 ```
 
-Скрипт [run.sh](/Users/dmitry/Projects/HR-Agent/hh_resume_agent/run.sh) сам найдет `.venv` или `venv` и запустит `main.py` через Python из виртуального окружения.
+Скрипт [run.sh](/Users/dmitry/Projects/HR-Agent/hh_resume_agent/run.sh) сам найдет `.venv` или `venv`, проверит обязательные локальные файлы и запустит `main.py`.
 
-Если у файла еще нет права на выполнение:
+Если у `run.sh` нет права на выполнение:
 
 ```bash
 chmod +x run.sh
 ```
 
-## 6. Результаты
+## Запуск в Windows
 
-Файлы будут в папке:
+В Windows `run.sh` не нужен.
 
-```text
-output/
+Создать виртуальное окружение:
+
+```powershell
+python -m venv .venv
 ```
 
-Там появятся:
+Установить зависимости:
 
 - подпапка запуска с датой и временем, например `output/2026-06-17_10-45-30/`
 - внутри нее `report.json`
 - внутри нее `report.html` с кликабельными ссылками на вакансию HH, Markdown, PDF и `report.json`
 
-Отдельно сохраняется файл просмотренных вакансий:
+Подготовить локальные файлы:
+
+```powershell
+copy data\resume_master.example.md data\resume_master.md
+copy data\keywords.example.txt data\keywords.txt
+copy .env.example .env
+```
+
+Запустить LLM backend:
+
+- для Ollama: `ollama serve`
+- для LM Studio: поднять `Local Server`
+
+Запустить основной прогон:
+
+```powershell
+.venv\Scripts\python main.py
+```
+
+## Что делает основной прогон
+
+По умолчанию проект:
+
+1. читает `resume_master.md`, `prompts.md`, `keywords.txt`
+2. ищет вакансии на HH
+3. пропускает уже просмотренные вакансии из `output/seen_vacancies.json`
+4. считает `score`, `strong_matches`, `gaps`, `reason`
+5. для вакансий выше порога пишет отчет
+
+Если включить:
+
+```env
+GENERATE_RESUME_ON_MATCH=true
+```
+
+то резюме будет генерироваться сразу во время основного прогона.
+
+## Результаты
+
+Файлы сохраняются в:
+
+```text
+output/
+```
+
+Для каждого запуска создается отдельная папка, например:
+
+```text
+output/2026-06-22_18-40-00/
+```
+
+Внутри нее будут:
+
+- `report.json`
+- `report.html`
+- `generate_resume_*.command` helper-скрипты для генерации резюме по вакансии
+- `.md` файлы адаптированных резюме, если генерация уже выполнялась
+- `.resume.html` preview для сгенерированных Markdown-файлов
+- `.pdf`, если `GENERATE_PDF=true` и WeasyPrint смог отработать
+
+Отдельно сохраняется:
 
 ```text
 output/seen_vacancies.json
 ```
 
-При следующем запуске вакансии из этого списка пропускаются.
+## Как сгенерировать резюме после основного прогона
 
-По умолчанию после завершения запуска приложение пытается автоматически открыть `report.html` в браузере. Это поведение можно отключить:
+Есть два варианта.
 
-```env
-OPEN_REPORT_IN_BROWSER=false
+### Вариант 1: из `report.html`
+
+Открыть `report.html` и нажать `Generate Resume` у нужной вакансии.
+
+После генерации отчет и ссылки на артефакты обновятся.
+
+### Вариант 2: через CLI
+
+macOS / Linux:
+
+```bash
+./run.sh generate --report-dir output/YYYY-MM-DD_HH-MM-SS --vacancy-url "https://hh.ru/vacancy/123456"
+```
+
+Windows:
+
+```powershell
+.venv\Scripts\python main.py generate --report-dir output\YYYY-MM-DD_HH-MM-SS --vacancy-url "https://hh.ru/vacancy/123456"
 ```
 
 ## Важно
 
-Браузер открывается в видимом режиме. Это сделано специально. Если hh.ru покажет капчу или логин, их можно пройти вручную.
-
-Если модель работает медленно, уменьшить:
-
-```env
-MAX_RESULTS_PER_KEYWORD=5
-```
-
-Если слишком много слабых вакансий, увеличить:
-
-```env
-MIN_MATCH_SCORE=80
-```
-
-Чтобы видеть, что приложение отправляет в Ollama, включить:
-
-```env
-LLM_DEBUG=true
-```
-
-Тогда в логах приложения будут:
-- модель;
-- размер prompt/response;
-- укороченный preview prompt/response.
+- Браузер по умолчанию запускается не в headless-режиме, чтобы можно было вручную пройти капчу или логин
+- Если модель работает медленно, уменьшить `MAX_RESULTS_PER_KEYWORD`
+- Если слишком много слабых вакансий, увеличить `MIN_MATCH_SCORE`
+- Если нужен полный лог запросов к модели, включить `LLM_DEBUG=true`
 
 По умолчанию резюме не генерируются во время основного прогона. Для этого отчет сначала собирает только score, reason, strong matches и gaps.
 
@@ -230,9 +335,9 @@ GENERATE_RESUME_ON_MATCH=true
 
 ## Проверки
 
-Быстрая проверка без запуска браузера и Ollama:
+Быстрые локальные проверки:
 
 ```bash
 .venv/bin/python -m unittest
-.venv/bin/python -m compileall -q . -x 'venv|.venv'
+.venv/bin/python main.py --help
 ```

@@ -1,0 +1,109 @@
+name: Auto update PR branch
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-current-pr:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Merge main into PR
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/${{ github.repository }}.git
+          git fetch upstream main
+
+          git merge upstream/main --no-edit -X ours
+
+          git push
+
+  update-open-prs-after-main-push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List open PRs
+        id: prs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            const payload = prs.map((pr) => ({
+              number: pr.number,
+              ref: pr.head.ref,
+              repo: pr.head.repo.full_name,
+            }));
+
+            core.setOutput('prs', JSON.stringify(payload));
+
+      - name: Merge main into open PR branches
+        env:
+          OPEN_PRS: ${{ steps.prs.outputs.prs }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ "$OPEN_PRS" = "[]" ]; then
+            echo "No open PRs to update."
+            exit 0
+          fi
+
+          echo "$OPEN_PRS" | jq -c '.[]' | while read -r pr; do
+            number="$(echo "$pr" | jq -r '.number')"
+            ref="$(echo "$pr" | jq -r '.ref')"
+            repo="$(echo "$pr" | jq -r '.repo')"
+            remote_name="pr-${number}"
+
+            echo "Updating PR #$number from $repo:$ref"
+
+            git checkout main
+            git reset --hard origin/main
+
+            git remote remove "$remote_name" 2>/dev/null || true
+            git remote add "$remote_name" "https://x-access-token:${GITHUB_TOKEN}@github.com/${repo}.git"
+
+            if ! git fetch "$remote_name" "$ref"; then
+              echo "Could not fetch PR #$number branch. Skipping."
+              continue
+            fi
+
+            git checkout -B "$ref" FETCH_HEAD
+
+            git merge origin/main --no-edit -X ours
+
+            if ! git push "$remote_name" "HEAD:$ref"; then
+              echo "Could not push PR #$number branch. Skipping."
+            fi
+          done

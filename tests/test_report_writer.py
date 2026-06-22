@@ -39,7 +39,9 @@ class JsonReportWriterTest(unittest.TestCase):
             output_path = Path(directory) / "report.html"
             json_path = Path(directory) / "report.json"
             markdown_path = Path(directory) / "resume.md"
+            script_path = Path(directory) / "generate.command"
             markdown_path.write_text("# Resume\n\ncontent", encoding="utf-8")
+            script_path.write_text("echo", encoding="utf-8")
             MarkdownPreviewWriter().write(markdown_path)
             item = VacancyReportItem(
                 score=91,
@@ -48,6 +50,7 @@ class JsonReportWriterTest(unittest.TestCase):
                 url="https://hh.ru/vacancy/1",
                 markdown=markdown_path,
                 pdf=Path(directory) / "resume.pdf",
+                generate_resume_script=script_path,
                 strong_matches=["QA"],
                 gaps=["No mobile testing"],
                 reason="Good match",
@@ -61,6 +64,7 @@ class JsonReportWriterTest(unittest.TestCase):
             self.assertIn("report.json", payload)
             self.assertIn("resume.md", payload)
             self.assertIn("resume.resume.html", payload)
+            self.assertIn("Regenerate Resume", payload)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from reports import (
     HtmlReportWriter,
     JsonReportWriter,
     MarkdownPreviewWriter,
+    ResumeGenerationScriptWriter,
     SeenVacancyStore,
     VacancyReportItem,
     normalize_vacancy_url,
@@ -43,8 +44,10 @@ class ResumePipeline:
         report_writer: JsonReportWriter,
         html_report_writer: HtmlReportWriter,
         markdown_preview_writer: MarkdownPreviewWriter,
+        resume_generation_script_writer: ResumeGenerationScriptWriter,
         seen_vacancy_store: SeenVacancyStore,
         report_opener: Optional[BrowserReportOpener],
+        project_root: Path,
     ) -> None:
         self._config = config
         self._vacancy_repository = vacancy_repository
@@ -54,8 +57,10 @@ class ResumePipeline:
         self._report_writer = report_writer
         self._html_report_writer = html_report_writer
         self._markdown_preview_writer = markdown_preview_writer
+        self._resume_generation_script_writer = resume_generation_script_writer
         self._seen_vacancy_store = seen_vacancy_store
         self._report_opener = report_opener
+        self._project_root = project_root
 
     def run(self) -> Path:
         resume_text = load_text_file(self._config.resume_path)
@@ -70,8 +75,7 @@ class ResumePipeline:
         html_report_path = run_output_dir / "report.html"
 
         if not keywords:
-            self._report_writer.write(report_items, report_path)
-            self._html_report_writer.write(report_items, html_report_path, report_path)
+            self._write_reports(report_items, report_path, html_report_path)
             self._open_report(html_report_path)
             logger.info("No keywords found. Empty report written to %s", report_path)
             return report_html_path
@@ -129,15 +133,6 @@ class ResumePipeline:
                         pdf_path=None,
                         generate_resume_script_path=script_path,
                     )
-                    if adaptation_result is None:
-                        continue
-
-                    base_name = self._unique_output_name(vacancy.title, used_file_names)
-                    markdown_path = run_output_dir / f"{base_name}.md"
-                    output_markdown = adaptation_result.render_output_markdown()
-                    self._markdown_exporter.export(output_markdown, markdown_path)
-                    self._markdown_preview_writer.write(markdown_path)
-                    pdf_path = self._export_pdf_path(run_output_dir, base_name, output_markdown)
 
                     if self._config.generate_resume_on_match:
                         generated_item = self._generate_resume_artifacts(
@@ -149,15 +144,50 @@ class ResumePipeline:
                             run_output_dir=run_output_dir,
                             used_file_names=used_file_names,
                         )
-                    )
+                        if generated_item is not None:
+                            report_item = generated_item
+
+                    report_items.append(report_item)
                     persisted_seen_urls.add(normalized_summary_url)
 
-        self._report_writer.write(report_items, report_path)
-        self._html_report_writer.write(report_items, html_report_path, report_path)
+        self._write_reports(report_items, report_path, html_report_path)
         self._seen_vacancy_store.save(persisted_seen_urls)
         self._open_report(html_report_path)
-        logger.info("Done. Report written to %s", report_path)
-        return report_path
+        logger.info("Done. Report written to %s", html_report_path)
+        return html_report_path
+
+    def generate_resume_for_report_item(self, report_dir: Path, vacancy_url: str) -> Path:
+        resume_text = load_text_file(self._config.resume_path)
+        prompts_text = load_text_file(self._config.prompts_path)
+        report_path = report_dir / "report.json"
+        html_report_path = report_dir / "report.html"
+        report_items = self._load_report_items(report_path)
+
+        report_index = self._find_report_item_index(report_items, vacancy_url)
+        report_item = report_items[report_index]
+
+        with self._vacancy_repository:
+            vacancy = self._load_vacancy(vacancy_url)
+
+        if vacancy is None:
+            raise RuntimeError(f"Could not load vacancy details for {vacancy_url}")
+
+        generated_item = self._generate_resume_artifacts(
+            report_item=report_item,
+            vacancy=vacancy,
+            resume_text=resume_text,
+            vacancy_text=vacancy.to_prompt_text(),
+            prompts_text=prompts_text,
+            run_output_dir=report_dir,
+            used_file_names=self._existing_output_names(report_items),
+        )
+        if generated_item is None or generated_item.markdown is None:
+            raise RuntimeError(f"Could not generate resume for {vacancy_url}")
+
+        report_items[report_index] = generated_item
+        self._write_reports(report_items, report_path, html_report_path)
+        logger.info("Generated resume for %s", vacancy_url)
+        return generated_item.markdown
 
     def _load_vacancy(self, url: str) -> Optional[VacancyDetails]:
         try:
@@ -339,6 +369,10 @@ class ResumePipeline:
         used_file_names.add(name)
         return name
 
+    def _open_report(self, html_report_path: Path) -> None:
+        if self._report_opener is not None:
+            self._report_opener.open(html_report_path)
+
     def _log_llm_inputs(
         self,
         stage: str,
@@ -406,6 +440,8 @@ def create_pipeline(config: AppConfig) -> ResumePipeline:
         report_writer=JsonReportWriter(),
         html_report_writer=HtmlReportWriter(),
         markdown_preview_writer=MarkdownPreviewWriter(),
+        resume_generation_script_writer=ResumeGenerationScriptWriter(),
         seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
         report_opener=BrowserReportOpener() if config.open_report_in_browser else None,
+        project_root=Path.cwd(),
     )
