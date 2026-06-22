@@ -13,7 +13,7 @@
 - `llm/` — клиент Ollama и парсинг JSON-ответов
 - `resume/` — оценка вакансий и адаптация резюме
 - `export/` — экспорт через заменяемые интерфейсы
-- `reports/` — генерация `report.json`
+- `reports/` — генерация `report.json`, `report.html` и helper-скриптов
 - `utils/` — общие утилиты
 - `pipeline.py` — orchestration без привязки к CLI
 - `main.py` — короткий entrypoint
@@ -132,6 +132,7 @@ BROWSER_PROFILE_DIR=browser_profile
 PAGE_TIMEOUT_MS=60000
 BROWSER_RETRY_ATTEMPTS=2
 BROWSER_RETRY_DELAY_MS=1000
+GENERATE_RESUME_ON_MATCH=false
 OUTPUT_DIR=output
 SEEN_VACANCIES_PATH=output/seen_vacancies.json
 RESUME_PATH=data/resume_master.md
@@ -174,8 +175,10 @@ output/
 Там появятся:
 
 - подпапка запуска с датой и временем, например `output/2026-06-17_10-45-30/`
-- внутри нее адаптированные резюме `.md` с комментариями рекрутера и итоговой версией резюме
 - внутри нее `report.json`
+- внутри нее `report.html`
+- внутри нее helper-скрипты `generate_resume_*.command`
+- после генерации из `report.html` внутри той же папки появятся адаптированные резюме `.md` с комментариями рекрутера и итоговой версией резюме
 
 Отдельно сохраняется файл просмотренных вакансий:
 
@@ -211,6 +214,14 @@ LLM_DEBUG=true
 - модель;
 - размер prompt/response;
 - укороченный preview prompt/response.
+
+По умолчанию резюме не генерируются во время основного прогона. Для этого отчет сначала собирает только score, reason, strong matches и gaps.
+
+Если нужно генерировать резюме сразу для каждой подходящей вакансии, включить:
+
+```env
+GENERATE_RESUME_ON_MATCH=true
+```
 
 ## Проверки
 

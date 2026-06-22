@@ -58,6 +58,7 @@ class AppConfig:
     retry_attempts: int
     retry_delay_ms: int
     generate_pdf: bool
+    generate_resume_on_match: bool
 
     @classmethod
     def from_env(
@@ -105,4 +106,5 @@ class AppConfig:
             retry_attempts=max(1, _get_int(env, "BROWSER_RETRY_ATTEMPTS", 2)),
             retry_delay_ms=max(0, _get_int(env, "BROWSER_RETRY_DELAY_MS", 1000)),
             generate_pdf=_get_bool(env, "GENERATE_PDF", True),
+            generate_resume_on_match=_get_bool(env, "GENERATE_RESUME_ON_MATCH", False),
         )
