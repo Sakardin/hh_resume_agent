@@ -24,6 +24,17 @@ def _get_int(env: Mapping[str, str], name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw_value!r}") from error
 
 
+def _get_optional_int(env: Mapping[str, str], name: str) -> Optional[int]:
+    raw_value = env.get(name)
+    if raw_value is None or raw_value.strip() == "":
+        return None
+
+    try:
+        return int(raw_value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be an integer, got {raw_value!r}") from error
+
+
 def _get_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
     raw_value = env.get(name)
     if raw_value is None or raw_value.strip() == "":
@@ -44,9 +55,10 @@ class AppConfig:
     ollama_base_url: str
     llm_debug: bool
     llm_log_preview_chars: int
-    hh_area: int
+    hh_area: Optional[int]
     min_match_score: int
     max_results_per_keyword: int
+    search_pages_per_keyword: int
     headless: bool
     browser_profile_dir: Path
     output_dir: Path
@@ -58,7 +70,7 @@ class AppConfig:
     retry_attempts: int
     retry_delay_ms: int
     generate_pdf: bool
-    generate_resume_on_match: bool
+    open_report_in_browser: bool
 
     @classmethod
     def from_env(
@@ -77,9 +89,10 @@ class AppConfig:
             ollama_base_url=env.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
             llm_debug=_get_bool(env, "LLM_DEBUG", False),
             llm_log_preview_chars=max(100, _get_int(env, "LLM_LOG_PREVIEW_CHARS", 800)),
-            hh_area=_get_int(env, "HH_AREA", 1002),
+            hh_area=_get_optional_int(env, "HH_AREA"),
             min_match_score=_get_int(env, "MIN_MATCH_SCORE", 70),
             max_results_per_keyword=_get_int(env, "MAX_RESULTS_PER_KEYWORD", 10),
+            search_pages_per_keyword=max(1, _get_int(env, "SEARCH_PAGES_PER_KEYWORD", 5)),
             headless=_get_bool(env, "HH_HEADLESS", False),
             browser_profile_dir=_resolve_path(
                 root_dir,
@@ -106,5 +119,5 @@ class AppConfig:
             retry_attempts=max(1, _get_int(env, "BROWSER_RETRY_ATTEMPTS", 2)),
             retry_delay_ms=max(0, _get_int(env, "BROWSER_RETRY_DELAY_MS", 1000)),
             generate_pdf=_get_bool(env, "GENERATE_PDF", True),
-            generate_resume_on_match=_get_bool(env, "GENERATE_RESUME_ON_MATCH", False),
+            open_report_in_browser=_get_bool(env, "OPEN_REPORT_IN_BROWSER", True),
         )

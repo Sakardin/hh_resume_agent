@@ -124,15 +124,16 @@ OLLAMA_MODEL=qwen3:8b
 OLLAMA_BASE_URL=http://localhost:11434/v1
 LLM_DEBUG=false
 LLM_LOG_PREVIEW_CHARS=800
-HH_AREA=1002
 MIN_MATCH_SCORE=70
 MAX_RESULTS_PER_KEYWORD=10
+SEARCH_PAGES_PER_KEYWORD=5
 HH_HEADLESS=false
 BROWSER_PROFILE_DIR=browser_profile
 PAGE_TIMEOUT_MS=60000
 BROWSER_RETRY_ATTEMPTS=2
 BROWSER_RETRY_DELAY_MS=1000
-GENERATE_RESUME_ON_MATCH=false
+GENERATE_PDF=true
+OPEN_REPORT_IN_BROWSER=true
 OUTPUT_DIR=output
 SEEN_VACANCIES_PATH=output/seen_vacancies.json
 RESUME_PATH=data/resume_master.md
@@ -140,7 +141,7 @@ PROMPTS_PATH=data/prompts.md
 KEYWORDS_PATH=data/keywords.txt
 ```
 
-`HH_AREA=1002` — Беларусь.
+`SEARCH_PAGES_PER_KEYWORD=5` — сколько страниц выдачи HH просматривать для каждого ключевого слова, чтобы добираться до новых вакансий, если верхние результаты уже были просмотрены.
 
 ## 5. Запуск
 
@@ -176,9 +177,7 @@ output/
 
 - подпапка запуска с датой и временем, например `output/2026-06-17_10-45-30/`
 - внутри нее `report.json`
-- внутри нее `report.html`
-- внутри нее helper-скрипты `generate_resume_*.command`
-- после генерации из `report.html` внутри той же папки появятся адаптированные резюме `.md` с комментариями рекрутера и итоговой версией резюме
+- внутри нее `report.html` с кликабельными ссылками на вакансию HH, Markdown, PDF и `report.json`
 
 Отдельно сохраняется файл просмотренных вакансий:
 
@@ -187,6 +186,12 @@ output/seen_vacancies.json
 ```
 
 При следующем запуске вакансии из этого списка пропускаются.
+
+По умолчанию после завершения запуска приложение пытается автоматически открыть `report.html` в браузере. Это поведение можно отключить:
+
+```env
+OPEN_REPORT_IN_BROWSER=false
+```
 
 ## Важно
 

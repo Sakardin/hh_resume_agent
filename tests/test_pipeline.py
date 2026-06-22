@@ -5,13 +5,7 @@ from pathlib import Path
 
 from config import AppConfig
 from pipeline import ResumePipeline
-from reports import (
-    HtmlReportWriter,
-    JsonReportWriter,
-    MarkdownPreviewWriter,
-    SeenVacancyStore,
-)
-from reports.resume_generation_script_writer import ResumeGenerationScriptWriter
+from reports import HtmlReportWriter, JsonReportWriter, MarkdownPreviewWriter, SeenVacancyStore
 from resume.models import MatchScore, ResumeAdaptationResult
 from vacancies.models import VacancyDetails, VacancySummary
 
@@ -67,37 +61,12 @@ class _DummyMarkdownExporter:
         return output_path
 
 
-class _DummyPdfExporter:
-    def export(self, markdown_text: str, output_path: Path) -> Path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("pdf", encoding="utf-8")
-        return output_path
+class _DummyReportOpener:
+    def __init__(self) -> None:
+        self.opened_paths = []
 
-
-class _DummyHtmlReportWriter:
-    def write(self, items, output_path: Path, report_json_path: Path) -> Path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("report html", encoding="utf-8")
-        return output_path
-
-
-class _DummyMarkdownPreviewWriter:
-    def write(self, markdown_path: Path) -> Path:
-        html_path = markdown_path.with_suffix(".resume.html")
-        html_path.write_text("preview", encoding="utf-8")
-        return html_path
-
-
-class _DummyResumeGenerationScriptWriter:
-    def write(
-        self,
-        output_path: Path,
-        project_root: Path,
-        report_dir: Path,
-        vacancy_url: str,
-    ) -> Path:
-        output_path.write_text(vacancy_url, encoding="utf-8")
-        return output_path
+    def open(self, path: Path) -> None:
+        self.opened_paths.append(path)
 
 
 class _LowScoreResumeService:
@@ -172,9 +141,10 @@ class ResumePipelineTest(unittest.TestCase):
                 ollama_base_url="http://localhost",
                 llm_debug=False,
                 llm_log_preview_chars=800,
-                hh_area=1002,
+                hh_area=None,
                 min_match_score=70,
                 max_results_per_keyword=10,
+                search_pages_per_keyword=5,
                 headless=True,
                 browser_profile_dir=root / "browser_profile",
                 output_dir=output_dir,
@@ -186,18 +156,21 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
-                generate_resume_on_match=False,
+                open_report_in_browser=True,
             )
             repository = _DummyRepository(
                 vacancies=[
                     VacancySummary(title="Seen vacancy", url="https://hh.ru/vacancy/1"),
-                    VacancySummary(title="New vacancy", url="https://hh.ru/vacancy/2"),
+                    VacancySummary(
+                        title="New vacancy",
+                        url="https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list",
+                    ),
                 ],
                 details_by_url={
-                    "https://hh.ru/vacancy/2": VacancyDetails(
+                    "https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list": VacancyDetails(
                         title="New vacancy",
                         company="Example",
-                        url="https://hh.ru/vacancy/2",
+                        url="https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list",
                         description="desc",
                         key_skills=["QA"],
                     )
@@ -205,6 +178,7 @@ class ResumePipelineTest(unittest.TestCase):
             )
 
             resume_service = _DummyResumeService()
+            report_opener = _DummyReportOpener()
 
             pipeline = ResumePipeline(
                 config=config,
@@ -213,27 +187,32 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
-                html_report_writer=_DummyHtmlReportWriter(),
-                markdown_preview_writer=_DummyMarkdownPreviewWriter(),
-                resume_generation_script_writer=_DummyResumeGenerationScriptWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
                 seen_vacancy_store=seen_store,
-                project_root=root,
+                report_opener=report_opener,
             )
 
             report_path = pipeline.run()
             saved_urls = seen_store.load()
+            html_report_path = report_path.with_suffix(".html")
+            resume_preview_path = report_path.parent / "New_vacancy.resume.html"
 
-            self.assertEqual(repository.requested_urls, ["https://hh.ru/vacancy/2"])
+            self.assertEqual(
+                repository.requested_urls,
+                ["https://hh.ru/vacancy/2?query=qa&hhtmFrom=vacancy_search_list"],
+            )
             self.assertEqual(
                 saved_urls,
                 {"https://hh.ru/vacancy/1", "https://hh.ru/vacancy/2"},
             )
             self.assertEqual(resume_service.target_languages, [])
             self.assertTrue(report_path.exists())
-            report_json = (report_path.parent / "report.json").read_text(encoding="utf-8")
-            self.assertIn("generate_resume_script", report_json)
+            self.assertTrue(html_report_path.exists())
+            self.assertTrue(resume_preview_path.exists())
+            self.assertEqual(report_opener.opened_paths, [html_report_path])
 
-    def test_run_marks_low_score_vacancy_as_seen_and_skips_export(self) -> None:
+    def test_run_skips_low_score_vacancy_without_marking_it_as_seen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output_dir = root / "output"
@@ -252,9 +231,10 @@ class ResumePipelineTest(unittest.TestCase):
                 ollama_base_url="http://localhost",
                 llm_debug=False,
                 llm_log_preview_chars=800,
-                hh_area=1002,
+                hh_area=None,
                 min_match_score=70,
                 max_results_per_keyword=10,
+                search_pages_per_keyword=5,
                 headless=True,
                 browser_profile_dir=root / "browser_profile",
                 output_dir=output_dir,
@@ -266,7 +246,7 @@ class ResumePipelineTest(unittest.TestCase):
                 retry_attempts=1,
                 retry_delay_ms=0,
                 generate_pdf=False,
-                generate_resume_on_match=False,
+                open_report_in_browser=True,
             )
             repository = _DummyRepository(
                 vacancies=[VacancySummary(title="Low score vacancy", url="https://hh.ru/vacancy/3")],
@@ -281,6 +261,7 @@ class ResumePipelineTest(unittest.TestCase):
                 },
             )
             resume_service = _LowScoreResumeService()
+            report_opener = _DummyReportOpener()
 
             pipeline = ResumePipeline(
                 config=config,
@@ -289,20 +270,80 @@ class ResumePipelineTest(unittest.TestCase):
                 markdown_exporter=_DummyMarkdownExporter(),
                 pdf_exporter=None,
                 report_writer=JsonReportWriter(),
-                html_report_writer=_DummyHtmlReportWriter(),
-                markdown_preview_writer=_DummyMarkdownPreviewWriter(),
-                resume_generation_script_writer=_DummyResumeGenerationScriptWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
                 seen_vacancy_store=seen_store,
-                project_root=root,
+                report_opener=report_opener,
             )
 
             report_path = pipeline.run()
             saved_urls = seen_store.load()
-            report_payload = (report_path.parent / "report.json").read_text(encoding="utf-8")
+            report_payload = report_path.read_text(encoding="utf-8")
+            html_report_path = report_path.with_suffix(".html")
 
-            self.assertEqual(saved_urls, {"https://hh.ru/vacancy/3"})
+            self.assertEqual(saved_urls, set())
             self.assertEqual(resume_service.adapt_calls, 0)
             self.assertEqual(report_payload.strip(), "[]")
+            self.assertTrue(html_report_path.exists())
+            self.assertEqual(report_opener.opened_paths, [html_report_path])
+
+    def test_log_llm_inputs_writes_resume_and_vacancy_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = AppConfig(
+                ollama_model="model",
+                ollama_base_url="http://localhost",
+                llm_debug=True,
+                llm_log_preview_chars=200,
+                hh_area=None,
+                min_match_score=70,
+                max_results_per_keyword=10,
+                search_pages_per_keyword=5,
+                headless=True,
+                browser_profile_dir=root / "browser_profile",
+                output_dir=root / "output",
+                seen_vacancies_path=root / "output" / "seen_vacancies.json",
+                resume_path=root / "resume.md",
+                prompts_path=root / "prompts.md",
+                keywords_path=root / "keywords.txt",
+                page_timeout_ms=1000,
+                retry_attempts=1,
+                retry_delay_ms=0,
+                generate_pdf=False,
+                open_report_in_browser=True,
+            )
+            pipeline = ResumePipeline(
+                config=config,
+                vacancy_repository=_DummyRepository(vacancies=[], details_by_url={}),
+                resume_service=_DummyResumeService(),
+                markdown_exporter=_DummyMarkdownExporter(),
+                pdf_exporter=None,
+                report_writer=JsonReportWriter(),
+                html_report_writer=HtmlReportWriter(),
+                markdown_preview_writer=MarkdownPreviewWriter(),
+                seen_vacancy_store=SeenVacancyStore(config.seen_vacancies_path),
+                report_opener=None,
+            )
+            vacancy = VacancyDetails(
+                title="QA Engineer",
+                company="Example",
+                url="https://hh.ru/vacancy/1",
+                description="Playwright and API testing",
+                key_skills=["QA", "Playwright"],
+            )
+
+            with self.assertLogs("pipeline", level="INFO") as captured:
+                pipeline._log_llm_inputs(
+                    stage="score_vacancy",
+                    resume_text="Manual QA and API testing",
+                    vacancy_text=vacancy.to_prompt_text(),
+                    vacancy=vacancy,
+                )
+
+            joined_logs = "\n".join(captured.output)
+            self.assertIn("Вот моё резюме:", joined_logs)
+            self.assertIn("Вот описание вакансии:", joined_logs)
+            self.assertIn("QA Engineer", joined_logs)
 
     def test_generate_resume_for_report_item_updates_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
