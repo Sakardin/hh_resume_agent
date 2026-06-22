@@ -1,13 +1,10 @@
-from config import AppConfig
-from pipeline import create_pipeline
+from cli import run_cli
 from utils import configure_logging
 
 
 def main() -> None:
     configure_logging()
-    config = AppConfig.from_env()
-    pipeline = create_pipeline(config)
-    pipeline.run()
+    run_cli()
 
 
 if __name__ == "__main__":
